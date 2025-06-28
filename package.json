@@ -1,12 +1,16 @@
 {
   "name": "richie-host",
   "version": "1.0.0",
+  "description": "Richie Host WhatsApp bot using Baileys Pro",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "npm install @fizzxydev/baileys-pro"
   },
+  "keywords": ["whatsapp", "baileys", "richie-host"],
+  "author": "Richie",
+  "license": "MIT",
   "dependencies": {
-    "@fizzxydev/baileys-pro": "^1.0.0",
     "cors": "^2.8.5",
     "express": "^4.17.1",
     "qrcode": "^1.5.0"
