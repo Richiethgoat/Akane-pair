@@ -1,40 +1,69 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
+const cors = require('cors');
+const Boom = require('@hapi/boom');
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  Browsers,
+} = require('@fizzxydev/baileys-pro');
+
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-const BOT_DIR = path.join(__dirname, 'Akane-MD');
-const ENV_PATH = path.join(BOT_DIR, '.env');
-let botProc = null;
-
+app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'frontend')));
 
-app.post('/start', (req, res) => {
-  if (botProc) return res.status(400).send('Bot already running');
-  botProc = spawn('node', ['index.js'], { cwd: BOT_DIR });
-  botProc.stdout.on('data', d=>console.log(d.toString()));
-  botProc.stderr.on('data', d=>console.error(d.toString()));
-  botProc.on('exit', code=>{ console.log(`Bot exited ${code}`); botProc=null; });
-  res.send('Bot started');
+const sessions = new Map(); // phone -> socket
+
+async function createOrGetSession(phone) {
+  if (sessions.has(phone)) return sessions.get(phone);
+  
+  const { state, saveCreds } = await useMultiFileAuthState(`./auth/${phone}`);
+  const kunle = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    browser: Browsers.macOS('Richie Host'),
+  });
+  
+  kunle.ev.on('creds.update', saveCreds);
+  kunle.ev.on('connection.update', (update) => {
+    console.log(`📶 [${phone}] Connection Update:`, update.connection || 'no status');
+    if (update.lastDisconnect) {
+      console.log(`⚠️ [${phone}] Disconnected:`, update.lastDisconnect?.error?.message || update.lastDisconnect);
+    }
+    if (update.connection === 'open') {
+      console.log(`✅ [${phone}] Connected`);
+    }
+  });
+  
+  kunle.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (!messages || !messages[0]) return;
+    const msg = messages[0];
+    console.log(`📥 [${phone}] Message received:`, msg.message);
+  });
+  
+  sessions.set(phone, kunle);
+  return kunle;
+}
+
+app.post('/pair', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone || !/^[0-9]{8,15}$/.test(phone)) {
+    const error = Boom.badRequest('Invalid phone number');
+    return res.status(error.output.statusCode).json(error.output.payload);
+  }
+  
+  try {
+    const kunle = await createOrGetSession(phone);
+    
+    if (!kunle.authState.creds.registered) {
+      const code = await kunle.requestPairingCode(phone, 'KING-RICH');
+      return res.json({ code });
+    } else {
+      return res.json({ message: 'Already paired' });
+    }
+  } catch (err) {
+    const error = Boom.badImplementation(err.message || 'Unknown error');
+    return res.status(error.output.statusCode).json(error.output.payload);
+  }
 });
 
-app.post('/stop', (req, res) => {
-  if (!botProc) return res.status(400).send('Bot not running');
-  botProc.kill(); botProc = null;
-  res.send('Bot stopped');
-});
-
-app.post('/set-session', (req, res) => {
-  const session = req.body.session;
-  if (!session) return res.status(400).send('Session ID required');
-  let env = fs.existsSync(ENV_PATH)? fs.readFileSync(ENV_PATH,'utf-8'): '';
-  if (!env.includes('SESSION_ID=')) env += `SESSION_ID=${session}\n`;
-  else env = env.replace(/SESSION_ID=.*/g, `SESSION_ID=${session}`);
-  fs.writeFileSync(ENV_PATH, env);
-  res.send('Session updated');
-});
-
-app.listen(PORT, () => console.log(`Listening on http://localhost:${PORT}`));
+app.listen(3000, () => console.log('🚀 Richie Host server running at http://localhost:3000'));
